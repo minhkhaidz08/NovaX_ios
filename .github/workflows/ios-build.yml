@@ -1,0 +1,80 @@
+name: iOS Build
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: ios-build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  XCODE_VERSION: "16.2"
+  IOS_DEPLOYMENT_TARGET: "16.0"
+  PROJECT_NAME: "NovaX"
+
+jobs:
+  build:
+    name: Build iOS App
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Select Xcode version
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: ${{ env.XCODE_VERSION }}
+
+      - name: Verify Xcode version
+        run: xcodebuild -version
+
+      - name: Cache XcodeGen
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/bin/xcodegen
+          key: xcodegen-cache
+
+      - name: Install XcodeGen
+        run: |
+          if ! command -v xcodegen &> /dev/null; then
+            brew install xcodegen
+          fi
+          xcodegen --version
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+        working-directory: ${{ env.PROJECT_NAME }}
+
+      - name: Build for iOS Device (unsigned .app)
+        run: |
+          xcodebuild clean build \
+            -project NovaX.xcodeproj \
+            -scheme NovaX \
+            -sdk iphoneos \
+            -configuration Release \
+            CODE_SIGNING_ALLOWED=NO \
+            CONFIGURATION_BUILD_DIR=build/device \
+            ASSETCATALOG_COMPILER_APPICON_NAME=
+        working-directory: ${{ env.PROJECT_NAME }}
+
+      - name: Package .app into .ipa
+        run: |
+          mkdir -p build/Payload
+          cp -r build/device/NovaX.app build/Payload/
+          cd build && zip -qr NovaX.ipa Payload/
+          rm -rf Payload
+        working-directory: ${{ env.PROJECT_NAME }}
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: NovaX-IPA
+          path: |
+            ${{ env.PROJECT_NAME }}/build/NovaX.ipa
+          retention-days: 7
